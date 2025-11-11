@@ -1,20 +1,62 @@
-runs-on: windows-latest
+name: Windows RDP with Tailscale
 
-steps:
-  - name: Enable RDP
-    run: |
-      Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0
-      Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
+on:
+  workflow_dispatch:
 
-  - name: Verify RDP Accessibility
-    run: |
-      Write-Host "Testing RDP Port..."
-      $testResult = Test-NetConnection -ComputerName localhost -Port 3389
-      if (-not $testResult.TcpTestSucceeded) { exit 1 }
-      Write-Host "RDP Port OK!"
+jobs:
+  setup-windows-rdp:
+    runs-on: windows-latest
 
-  - name: Maintain Connection
-    run: |
-      Write-Host "RDP IP: $(hostname -I)"
-      while ($true) { Start-Sleep -Seconds 300 }
-      
+    steps:
+      - name: Enable RDP
+        shell: powershell
+        run: |
+          Write-Host "🔧 Enabling RDP access..."
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0
+          Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
+          Write-Host "✅ RDP has been enabled successfully."
+
+      - name: Install Tailscale
+        shell: powershell
+        run: |
+          Write-Host "🚀 Installing Tailscale..."
+          Invoke-WebRequest -Uri "https://pkgs.tailscale.com/stable/tailscale-setup-latest.exe" -OutFile "tailscale-setup.exe"
+          Start-Process .\tailscale-setup.exe -ArgumentList "/quiet" -Wait
+          Write-Host "✅ Tailscale installed successfully."
+          tailscale up --authkey=${{ secrets.TAILSCALE_AUTHKEY }} --hostname "windows-rdp-$(Get-Date -Format yyyyMMddHHmmss)" --accept-routes --ssh
+
+      - name: Verify RDP Accessibility
+        shell: powershell
+        run: |
+          Write-Host "🧩 Checking if RDP port (3389) is open..."
+          $testResult = Test-NetConnection -ComputerName localhost -Port 3389
+          if (-not $testResult.TcpTestSucceeded) {
+            Write-Error "❌ RDP port 3389 not accessible!"
+            exit 1
+          }
+          Write-Host "✅ RDP port is open and accessible."
+
+      - name: Display RDP Connection Info
+        shell: powershell
+        run: |
+          Write-Host "======================================="
+          Write-Host "✅ Windows RDP is now ready!"
+          Write-Host "🔹 Connect using your Tailscale IP:"
+          tailscale ip -4
+          Write-Host ""
+          Write-Host "🧑 Username: runneradmin"
+          Write-Host "🔐 Password: (use your GitHub workflow secret or create via next step)"
+          Write-Host "======================================="
+
+      - name: Set temporary password
+        shell: powershell
+        run: |
+          $password = [System.Web.Security.Membership]::GeneratePassword(12,2)
+          net user runneradmin $password
+          Write-Host "Temporary RDP Password: $password"
+
+      - name: Keep session active
+        shell: powershell
+        run: |
+          Write-Host "🕒 Keeping the RDP session active..."
+          while ($true) { Start-Sleep -Seconds 300 }
